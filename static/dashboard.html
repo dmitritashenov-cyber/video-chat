@@ -1,19 +1,23 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Dashboard</title>
+    <meta charset="UTF-8">
+    <title>Dashboard</title>
 </head>
 <body>
-<h2>Привет, {{username}}</h2>
-<button onclick="createRoom()">Создать комнату</button>
-<div id="link"></div>
+
+<h2>Welcome, {{USER}}</h2>
+
+<button onclick="createRoom()">➕ Create video room</button>
+
+<p id="roomLink"></p>
 
 <script>
 function createRoom() {
-    const roomId = Math.random().toString(36).substring(2, 10);
-    const url = `${window.location.origin}/static/room.html?room=${roomId}`;
-    document.getElementById("link").innerHTML = `Ссылка на комнату: <a href="${url}" target="_blank">${url}</a>`;
+    fetch("/create-room", { redirect: "follow" })
+        .then(response => {
+            window.location.href = response.url;
+        });
 }
 </script>
 

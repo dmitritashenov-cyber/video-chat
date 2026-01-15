@@ -1,27 +1,32 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Video Chat</title>
+<meta charset="UTF-8">
+<title>Video Room</title>
 </head>
 <body>
 
-<h2>WebRTC Video Chat</h2>
+<h2>Video Room</h2>
+
+<p>Share this link with your friend:</p>
+<input id="link" style="width:80%" readonly>
+
+<br><br>
 
 <video id="localVideo" autoplay muted playsinline style="width:45%;border:1px solid black;"></video>
 <video id="remoteVideo" autoplay playsinline style="width:45%;border:1px solid black;"></video>
 
 <script>
-const room = new URLSearchParams(window.location.search).get("room") || "test";
+const room = new URLSearchParams(window.location.search).get("room");
+document.getElementById("link").value = location.href;
 
-// автоматически выбираем ws или wss
+// ws / wss auto
 const protocol = location.protocol === "https:" ? "wss" : "ws";
 const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
 
 let pc;
 let localStream;
 
-// Бесплатный TURN
 const iceConfig = {
   iceServers: [
     {
@@ -34,8 +39,7 @@ const iceConfig = {
       credential: "openrelayproject"
     },
     { urls: "stun:stun.l.google.com:19302" }
-  ],
-  iceTransportPolicy: "all"
+  ]
 };
 
 async function start() {
@@ -53,7 +57,6 @@ async function start() {
     });
 
     pc.ontrack = event => {
-        console.log("Remote track received");
         document.getElementById("remoteVideo").srcObject = event.streams[0];
     };
 
@@ -71,18 +74,13 @@ ws.onmessage = async (msg) => {
     const data = JSON.parse(msg.data);
 
     if (data.type === "offer") {
-        console.log("Received offer");
         await pc.setRemoteDescription(data.offer);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        ws.send(JSON.stringify({
-            type: "answer",
-            answer: answer
-        }));
+        ws.send(JSON.stringify({ type: "answer", answer }));
     }
 
     if (data.type === "answer") {
-        console.log("Received answer");
         await pc.setRemoteDescription(data.answer);
     }
 
@@ -90,22 +88,16 @@ ws.onmessage = async (msg) => {
         try {
             await pc.addIceCandidate(data.candidate);
         } catch (e) {
-            console.error("ICE error", e);
+            console.error(e);
         }
     }
 };
 
 ws.onopen = async () => {
-    console.log("WebSocket connected");
     await start();
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
-    ws.send(JSON.stringify({
-        type: "offer",
-        offer: offer
-    }));
+    ws.send(JSON.stringify({ type: "offer", offer }));
 };
 </script>
 
