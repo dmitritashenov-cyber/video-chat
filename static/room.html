@@ -1,49 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>WebRTC Room</title>
-  <style>
-    body {
-      background: #0f172a;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-align: center;
-    }
-    video {
-      width: 45%;
-      margin: 10px;
-      border-radius: 10px;
-      background: black;
-    }
-    #status {
-      margin: 10px;
-      color: #38bdf8;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>Video Chat</title>
 </head>
 <body>
 
-<h2>WebRTC Video Call</h2>
-<div id="status">Connecting...</div>
+<h2>WebRTC Video Chat</h2>
 
-<video id="localVideo" autoplay muted playsinline></video>
-<video id="remoteVideo" autoplay playsinline></video>
+<video id="localVideo" autoplay muted playsinline style="width:45%;border:1px solid black;"></video>
+<video id="remoteVideo" autoplay playsinline style="width:45%;border:1px solid black;"></video>
 
 <script>
 const room = new URLSearchParams(window.location.search).get("room") || "test";
-const statusEl = document.getElementById("status");
-const localVideo = document.getElementById("localVideo");
-const remoteVideo = document.getElementById("remoteVideo");
+
+// автоматически выбираем ws или wss
+const protocol = location.protocol === "https:" ? "wss" : "ws";
+const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
 
 let pc;
-let ws;
 let localStream;
 
-// ----------------------
-// TURN CONFIG (FREE)
-// ----------------------
-const pcConfig = {
+// Бесплатный TURN
+const iceConfig = {
   iceServers: [
     {
       urls: [
@@ -53,26 +32,82 @@ const pcConfig = {
       ],
       username: "openrelayproject",
       credential: "openrelayproject"
-    }
+    },
+    { urls: "stun:stun.l.google.com:19302" }
   ],
-  iceTransportPolicy: "relay"
+  iceTransportPolicy: "all"
 };
 
-// ----------------------
-// INIT
-// ----------------------
-async function init() {
-  status("Opening camera...");
-  localStream = await navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: true
-  });
+async function start() {
+    localStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+    });
 
-  localVideo.srcObject = localStream;
+    document.getElementById("localVideo").srcObject = localStream;
 
-  createPeer();
+    pc = new RTCPeerConnection(iceConfig);
 
-  connectWebSocket();
+    localStream.getTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+    });
+
+    pc.ontrack = event => {
+        console.log("Remote track received");
+        document.getElementById("remoteVideo").srcObject = event.streams[0];
+    };
+
+    pc.onicecandidate = event => {
+        if (event.candidate) {
+            ws.send(JSON.stringify({
+                type: "ice",
+                candidate: event.candidate
+            }));
+        }
+    };
 }
 
-// ---------------
+ws.onmessage = async (msg) => {
+    const data = JSON.parse(msg.data);
+
+    if (data.type === "offer") {
+        console.log("Received offer");
+        await pc.setRemoteDescription(data.offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({
+            type: "answer",
+            answer: answer
+        }));
+    }
+
+    if (data.type === "answer") {
+        console.log("Received answer");
+        await pc.setRemoteDescription(data.answer);
+    }
+
+    if (data.type === "ice") {
+        try {
+            await pc.addIceCandidate(data.candidate);
+        } catch (e) {
+            console.error("ICE error", e);
+        }
+    }
+};
+
+ws.onopen = async () => {
+    console.log("WebSocket connected");
+    await start();
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    ws.send(JSON.stringify({
+        type: "offer",
+        offer: offer
+    }));
+};
+</script>
+
+</body>
+</html>
