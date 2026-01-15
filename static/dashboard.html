@@ -5,21 +5,10 @@
     <title>Dashboard</title>
 </head>
 <body>
-
 <h2>Welcome, {{USER}}</h2>
-
-<button onclick="createRoom()">➕ Create video room</button>
-
-<p id="roomLink"></p>
-
-<script>
-function createRoom() {
-    fetch("/create-room", { redirect: "follow" })
-        .then(response => {
-            window.location.href = response.url;
-        });
-}
-</script>
-
+<p>Share this room link with your friend:</p>
+<input id="roomLink" style="width:80%" readonly value="{{ROOM_LINK}}">
+<br><br>
+<a id="enterRoom" href="{{ROOM_LINK}}">Enter Room</a>
 </body>
 </html>

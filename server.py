@@ -8,19 +8,18 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # -----------------------------
-# Fake users storage (memory)
+# Пользователи (пока в памяти)
 # -----------------------------
-users = {}   # username -> password
+users = {}  # username -> password
 
 # -----------------------------
-# WebRTC rooms
+# Видеокомнаты
 # -----------------------------
 rooms = defaultdict(list)
 
 # -----------------------------
-# Pages
+# Страницы
 # -----------------------------
-
 @app.get("/", response_class=HTMLResponse)
 async def login_page():
     with open("static/login.html", "r", encoding="utf-8") as f:
@@ -33,27 +32,22 @@ async def login(username: str = Form(...), password: str = Form(...)):
         users[username] = password
     elif users[username] != password:
         return HTMLResponse("Wrong password", status_code=401)
-
     return RedirectResponse(url=f"/dashboard?user={username}", status_code=302)
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(user: str):
     with open("static/dashboard.html", "r", encoding="utf-8") as f:
         html = f.read()
-        return html.replace("{{USER}}", user)
-
-@app.get("/create-room")
-async def create_room():
-    room_id = uuid.uuid4().hex[:8]
-    return RedirectResponse(
-        url=f"/static/room.html?room={room_id}",
-        status_code=302
-    )
+        # создаём одну уникальную ссылку на комнату для пользователя
+        room_id = uuid.uuid4().hex[:8]
+        link = f"/static/room.html?room={room_id}"
+        html = html.replace("{{USER}}", user)
+        html = html.replace("{{ROOM_LINK}}", link)
+        return html
 
 # -----------------------------
-# WebSocket signaling
+# WebSocket для WebRTC
 # -----------------------------
-
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(ws: WebSocket, room_id: str):
     await ws.accept()
@@ -63,7 +57,7 @@ async def websocket_endpoint(ws: WebSocket, room_id: str):
     try:
         while True:
             data = await ws.receive_text()
-            # отправляем всем кроме отправителя
+            # рассылаем всем кроме отправителя
             for client in rooms[room_id]:
                 if client != ws:
                     await client.send_text(data)

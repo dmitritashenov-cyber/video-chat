@@ -9,7 +9,7 @@
 <h2>Video Room</h2>
 
 <p>Share this link:</p>
-<input id="link" style="width:80%" readonly>
+<input id="link" style="width:80%" readonly value="">
 
 <br><br>
 
@@ -20,7 +20,6 @@
 const room = new URLSearchParams(window.location.search).get("room");
 document.getElementById("link").value = location.href;
 
-// ws / wss auto
 const protocol = location.protocol === "https:" ? "wss" : "ws";
 const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
 
@@ -28,10 +27,9 @@ let pc;
 let localStream;
 let makingOffer = false;
 let ignoreOffer = false;
-let polite = false;   // определим позже
+let polite = true;
 let pendingCandidates = [];
 
-// Бесплатный TURN
 const iceConfig = {
   iceServers: [
     {
@@ -48,102 +46,54 @@ const iceConfig = {
 };
 
 async function start() {
-    localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-    });
-
+    localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
     document.getElementById("localVideo").srcObject = localStream;
 
     pc = new RTCPeerConnection(iceConfig);
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-    // ВАЖНО: добавляем треки до сигналинга
-    localStream.getTracks().forEach(track => {
-        pc.addTrack(track, localStream);
-    });
-
-    pc.ontrack = event => {
-        document.getElementById("remoteVideo").srcObject = event.streams[0];
-    };
+    pc.ontrack = e => document.getElementById("remoteVideo").srcObject = e.streams[0];
 
     pc.onicecandidate = ({candidate}) => {
-        if (candidate) {
-            ws.send(JSON.stringify({ type: "ice", candidate }));
-        }
+        if (candidate) ws.send(JSON.stringify({type:"ice", candidate}));
     };
 
     pc.onnegotiationneeded = async () => {
         try {
             makingOffer = true;
             await pc.setLocalDescription(await pc.createOffer());
-            ws.send(JSON.stringify({
-                type: "offer",
-                offer: pc.localDescription
-            }));
-        } catch (err) {
-            console.error(err);
-        } finally {
-            makingOffer = false;
-        }
+            ws.send(JSON.stringify({type:"offer", offer: pc.localDescription}));
+        } catch(e){console.error(e)}
+        finally{makingOffer=false;}
     };
 }
 
-ws.onmessage = async (msg) => {
+ws.onmessage = async msg => {
     const data = JSON.parse(msg.data);
-
-    try {
-        if (data.type === "role") {
-            polite = data.polite;
-            console.log("Polite:", polite);
-            return;
-        }
-
-        if (data.type === "offer") {
-            const offerCollision =
-                makingOffer || pc.signalingState !== "stable";
-
+    try{
+        if(data.type==="offer"){
+            const offerCollision = makingOffer || pc.signalingState!=="stable";
             ignoreOffer = !polite && offerCollision;
-            if (ignoreOffer) {
-                console.log("Ignoring offer (collision)");
-                return;
-            }
+            if(ignoreOffer) return;
 
             await pc.setRemoteDescription(data.offer);
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({type:"answer", answer:pc.localDescription}));
 
-            ws.send(JSON.stringify({
-                type: "answer",
-                answer: pc.localDescription
-            }));
-
-            // применяем отложенные ICE
-            for (const c of pendingCandidates) {
-                await pc.addIceCandidate(c);
-            }
+            for(const c of pendingCandidates) await pc.addIceCandidate(c);
             pendingCandidates = [];
         }
 
-        if (data.type === "answer") {
-            await pc.setRemoteDescription(data.answer);
+        if(data.type==="answer") await pc.setRemoteDescription(data.answer);
+        if(data.type==="ice"){
+            if(pc.remoteDescription) await pc.addIceCandidate(data.candidate);
+            else pendingCandidates.push(data.candidate);
         }
-
-        if (data.type === "ice") {
-            if (pc.remoteDescription) {
-                await pc.addIceCandidate(data.candidate);
-            } else {
-                pendingCandidates.push(data.candidate);
-            }
-        }
-
-    } catch (e) {
-        console.error("Signal error:", e);
-    }
+    } catch(e){console.error("Signal error",e)}
 };
 
-ws.onopen = async () => {
-    await start();
-};
+ws.onopen = async () => { await start(); };
 </script>
 
 </body>
