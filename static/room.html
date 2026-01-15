@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Video Chat</title>
+<style>
+body { text-align: center; font-family: Arial; background: #f0f0f0; }
+video { width: 45%; border: 2px solid #333; margin: 5px; }
+</style>
+</head>
+<body>
+
+<h2>WebRTC Video Chat</h2>
+
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
+
+<script>
+const room = new URLSearchParams(location.search).get("room") || "test";
+const ws = new WebSocket(`ws://${location.host}/ws/${room}`);
+
+const pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
+
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
+
+let localStream = null;
+let readyToCall = false;
+let offerSent = false;
+
+// ===== CAMERA =====
+navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+.then(stream => {
+    localStream = stream;
+    localVideo.srcObject = stream;
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    console.log("Camera ready");
+    if (readyToCall && !offerSent) createOffer();
+})
+.catch(err => alert("Camera error: " + err));
+
+// ===== REMOTE TRACK =====
+pc.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
+
+// ===== ICE =====
+pc.onicecandidate = e => {
+    if (e.candidate) ws.send(JSON.stringify({ type: "candidate", data: e.candidate }));
+};
+
+// ===== SIGNALING =====
+ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === "start") {
+        if (localStream && !offerSent) createOffer();
+        else readyToCall = true;
+    }
+
+    if (msg.type === "offer") {
+        await pc.setRemoteDescription(msg.data);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: "answer", data: answer }));
+    }
+
+    if (msg.type === "answer") {
+        await pc.setRemoteDescription(msg.data);
+    }
+
+    if (msg.type === "candidate") {
+        try { await pc.addIceCandidate(msg.data); } 
+        catch(e) { console.warn("ICE error", e); }
+    }
+};
+
+// ===== CREATE OFFER =====
+async function createOffer() {
+    offerSent = true;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: "offer", data: offer }));
+    readyToCall = false;
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dashboard</title>
+</head>
+<body>
+<h2>Привет, {{username}}</h2>
+<button onclick="createRoom()">Создать комнату</button>
+<div id="link"></div>
+
+<script>
+function createRoom() {
+    const roomId = Math.random().toString(36).substring(2, 10);
+    const url = `${window.location.origin}/static/room.html?room=${roomId}`;
+    document.getElementById("link").innerHTML = `Ссылка на комнату: <a href="${url}" target="_blank">${url}</a>`;
+}
+</script>
+
+</body>
+</html>
