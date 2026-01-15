@@ -8,7 +8,7 @@
 
 <h2>Video Room</h2>
 
-<p>Share this link with your friend:</p>
+<p>Share this link:</p>
 <input id="link" style="width:80%" readonly>
 
 <br><br>
@@ -26,7 +26,12 @@ const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
 
 let pc;
 let localStream;
+let makingOffer = false;
+let ignoreOffer = false;
+let polite = false;   // определим позже
+let pendingCandidates = [];
 
+// Бесплатный TURN
 const iceConfig = {
   iceServers: [
     {
@@ -52,6 +57,7 @@ async function start() {
 
     pc = new RTCPeerConnection(iceConfig);
 
+    // ВАЖНО: добавляем треки до сигналинга
     localStream.getTracks().forEach(track => {
         pc.addTrack(track, localStream);
     });
@@ -60,12 +66,24 @@ async function start() {
         document.getElementById("remoteVideo").srcObject = event.streams[0];
     };
 
-    pc.onicecandidate = event => {
-        if (event.candidate) {
+    pc.onicecandidate = ({candidate}) => {
+        if (candidate) {
+            ws.send(JSON.stringify({ type: "ice", candidate }));
+        }
+    };
+
+    pc.onnegotiationneeded = async () => {
+        try {
+            makingOffer = true;
+            await pc.setLocalDescription(await pc.createOffer());
             ws.send(JSON.stringify({
-                type: "ice",
-                candidate: event.candidate
+                type: "offer",
+                offer: pc.localDescription
             }));
+        } catch (err) {
+            console.error(err);
+        } finally {
+            makingOffer = false;
         }
     };
 }
@@ -73,31 +91,58 @@ async function start() {
 ws.onmessage = async (msg) => {
     const data = JSON.parse(msg.data);
 
-    if (data.type === "offer") {
-        await pc.setRemoteDescription(data.offer);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", answer }));
-    }
-
-    if (data.type === "answer") {
-        await pc.setRemoteDescription(data.answer);
-    }
-
-    if (data.type === "ice") {
-        try {
-            await pc.addIceCandidate(data.candidate);
-        } catch (e) {
-            console.error(e);
+    try {
+        if (data.type === "role") {
+            polite = data.polite;
+            console.log("Polite:", polite);
+            return;
         }
+
+        if (data.type === "offer") {
+            const offerCollision =
+                makingOffer || pc.signalingState !== "stable";
+
+            ignoreOffer = !polite && offerCollision;
+            if (ignoreOffer) {
+                console.log("Ignoring offer (collision)");
+                return;
+            }
+
+            await pc.setRemoteDescription(data.offer);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            ws.send(JSON.stringify({
+                type: "answer",
+                answer: pc.localDescription
+            }));
+
+            // применяем отложенные ICE
+            for (const c of pendingCandidates) {
+                await pc.addIceCandidate(c);
+            }
+            pendingCandidates = [];
+        }
+
+        if (data.type === "answer") {
+            await pc.setRemoteDescription(data.answer);
+        }
+
+        if (data.type === "ice") {
+            if (pc.remoteDescription) {
+                await pc.addIceCandidate(data.candidate);
+            } else {
+                pendingCandidates.push(data.candidate);
+            }
+        }
+
+    } catch (e) {
+        console.error("Signal error:", e);
     }
 };
 
 ws.onopen = async () => {
     await start();
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: "offer", offer }));
 };
 </script>
 
