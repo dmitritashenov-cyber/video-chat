@@ -1,14 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Dashboard</title>
+<meta charset="UTF-8">
+<title>Dashboard</title>
 </head>
 <body>
 <h2>Welcome, {{USER}}</h2>
-<p>Share this room link with your friend:</p>
-<input id="roomLink" style="width:80%" readonly value="{{ROOM_LINK}}">
+<h3>Your Room:</h3>
+<input style="width:80%" readonly value="{{ROOM_LINK}}">
 <br><br>
-<a id="enterRoom" href="{{ROOM_LINK}}">Enter Room</a>
+<a href="{{ROOM_LINK}}">Enter Room</a>
+
+<h3>Send Room Link to User:</h3>
+<form method="post" action="/send_link">
+    <input type="hidden" name="sender" value="{{USER}}">
+    <input name="recipient" placeholder="Recipient username" required>
+    <input name="link" value="{{ROOM_LINK}}" readonly>
+    <button type="submit">Send</button>
+</form>
+
+<h3>Inbox:</h3>
+<div>
+{{INBOX}}
+</div>
+
 </body>
 </html>

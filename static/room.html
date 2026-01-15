@@ -3,18 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <title>Video Room</title>
+<style>
+video { width: 30%; border: 1px solid black; margin: 5px; }
+#chat { border:1px solid black; height:200px; overflow-y:auto; padding:5px; margin:10px 0; }
+</style>
 </head>
 <body>
-
 <h2>Video Room</h2>
-
 <p>Share this link:</p>
-<input id="link" style="width:80%" readonly value="">
-
+<input id="link" style="width:80%" readonly>
 <br><br>
+<video id="localVideo" autoplay muted playsinline></video>
+<div id="remotes"></div>
 
-<video id="localVideo" autoplay muted playsinline style="width:45%;border:1px solid black;"></video>
-<video id="remoteVideo" autoplay playsinline style="width:45%;border:1px solid black;"></video>
+<h3>Chat:</h3>
+<div id="chat"></div>
+<input id="chatInput" placeholder="Message"><button id="sendChat">Send</button>
 
 <script>
 const room = new URLSearchParams(window.location.search).get("room");
@@ -23,77 +27,110 @@ document.getElementById("link").value = location.href;
 const protocol = location.protocol === "https:" ? "wss" : "ws";
 const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
 
-let pc;
-let localStream;
-let makingOffer = false;
-let ignoreOffer = false;
-let polite = true;
-let pendingCandidates = [];
-
 const iceConfig = {
-  iceServers: [
-    {
-      urls: [
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:3478"
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    { urls: "stun:stun.l.google.com:19302" }
+  iceServers:[
+    { urls:"stun:stun.l.google.com:19302" },
+    { urls:["turn:openrelay.metered.ca:80","turn:openrelay.metered.ca:443","turn:openrelay.metered.ca:3478"],
+      username:"openrelayproject", credential:"openrelayproject" }
   ]
 };
 
-async function start() {
-    localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-    document.getElementById("localVideo").srcObject = localStream;
+let localStream;
+const peers = {};
+const remoteVideos = {};
 
-    pc = new RTCPeerConnection(iceConfig);
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-    pc.ontrack = e => document.getElementById("remoteVideo").srcObject = e.streams[0];
-
-    pc.onicecandidate = ({candidate}) => {
-        if (candidate) ws.send(JSON.stringify({type:"ice", candidate}));
-    };
-
-    pc.onnegotiationneeded = async () => {
-        try {
-            makingOffer = true;
-            await pc.setLocalDescription(await pc.createOffer());
-            ws.send(JSON.stringify({type:"offer", offer: pc.localDescription}));
-        } catch(e){console.error(e)}
-        finally{makingOffer=false;}
-    };
+async function initLocal(){
+  localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+  document.getElementById("localVideo").srcObject = localStream;
 }
 
-ws.onmessage = async msg => {
-    const data = JSON.parse(msg.data);
+function createVideoElement(id){
+  const video = document.createElement("video");
+  video.autoplay=true;
+  video.playsInline=true;
+  video.id=id;
+  document.getElementById("remotes").appendChild(video);
+  return video;
+}
+
+async function createPeer(remote_id, polite){
+  const pc = new RTCPeerConnection(iceConfig);
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  pc.ontrack = e=>{
+    if(!remoteVideos[remote_id]) remoteVideos[remote_id]=createVideoElement(remote_id);
+    remoteVideos[remote_id].srcObject=e.streams[0];
+  };
+  pc.onicecandidate = ({candidate})=>{
+    if(candidate) ws.send(JSON.stringify({type:"ice", candidate, to:remote_id}));
+  };
+  pc.makingOffer=false;
+  pc.ignoreOffer=false;
+  pc.polite=polite;
+  pc.pendingCandidates=[];
+  pc.onnegotiationneeded = async ()=>{
     try{
-        if(data.type==="offer"){
-            const offerCollision = makingOffer || pc.signalingState!=="stable";
-            ignoreOffer = !polite && offerCollision;
-            if(ignoreOffer) return;
+      pc.makingOffer=true;
+      await pc.setLocalDescription(await pc.createOffer());
+      ws.send(JSON.stringify({type:"offer", offer: pc.localDescription, to:remote_id}));
+    }catch(e){console.error(e);}
+    finally{pc.makingOffer=false;}
+  };
+  return pc;
+}
 
-            await pc.setRemoteDescription(data.offer);
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            ws.send(JSON.stringify({type:"answer", answer:pc.localDescription}));
+// ================= Signal =================
+ws.onmessage=async msg=>{
+  const data = JSON.parse(msg.data);
 
-            for(const c of pendingCandidates) await pc.addIceCandidate(c);
-            pendingCandidates = [];
-        }
+  // список уже подключенных
+  if(data.type==="existing"){
+    for(const cid of data.clients){
+      if(!peers[cid]) peers[cid]=await createPeer(cid,true);
+    }
+    return;
+  }
 
-        if(data.type==="answer") await pc.setRemoteDescription(data.answer);
-        if(data.type==="ice"){
-            if(pc.remoteDescription) await pc.addIceCandidate(data.candidate);
-            else pendingCandidates.push(data.candidate);
-        }
-    } catch(e){console.error("Signal error",e)}
+  const from = data.from;
+  if(!from) return;
+  if(!peers[from]) peers[from]=await createPeer(from,true);
+  const pc = peers[from];
+
+  try{
+    if(data.type==="offer"){
+      const offerCollision = pc.makingOffer || pc.signalingState!=="stable";
+      pc.ignoreOffer = !pc.polite && offerCollision;
+      if(pc.ignoreOffer) return;
+
+      await pc.setRemoteDescription(data.offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.send(JSON.stringify({type:"answer", answer: pc.localDescription, to:from}));
+      for(const c of pc.pendingCandidates) await pc.addIceCandidate(c);
+      pc.pendingCandidates=[];
+    }
+    if(data.type==="answer") await pc.setRemoteDescription(data.answer);
+    if(data.type==="ice"){
+      if(pc.remoteDescription) await pc.addIceCandidate(data.candidate);
+      else pc.pendingCandidates.push(data.candidate);
+    }
+    if(data.chat){
+      const chat = document.getElementById("chat");
+      chat.innerHTML += `<div><b>User ${from}:</b> ${data.chat}</div>`;
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }catch(e){console.error(e);}
 };
 
-ws.onopen = async () => { await start(); };
+// Chat input
+document.getElementById("sendChat").onclick=()=>{
+  const msg = document.getElementById("chatInput").value;
+  if(msg){
+    ws.send(JSON.stringify({chat:msg}));
+    document.getElementById("chatInput").value="";
+  }
+};
+
+ws.onopen=async ()=>{ await initLocal(); ws.send(JSON.stringify({type:"join"})); };
 </script>
 
 </body>
