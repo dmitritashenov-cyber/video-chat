@@ -262,12 +262,27 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
     
     # Отправка списка существующих клиентов новому клиенту
     existing_clients = []
+    new_client_info = {
+        "id": client_id,
+        "username": username or f"User {client_id}"
+    }
+    
     for cid in rooms[room_id]:
         if cid != client_id:
             existing_clients.append({
                 "id": cid,
                 "username": room_users[room_id].get(cid, f"User {cid}")
             })
+            # Уведомляем существующих клиентов о новом участнике
+            try:
+                await rooms[room_id][cid].send_text(
+                    json.dumps({
+                        "type": "new_client",
+                        "client": new_client_info
+                    })
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify client {cid} about new client: {e}")
     
     try:
         await websocket.send_text(
