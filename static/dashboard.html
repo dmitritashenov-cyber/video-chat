@@ -1,28 +1,364 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-<meta charset="UTF-8">
-<title>Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - {{USER}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 24px 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .user-greeting {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .user-avatar {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 20px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        h1 {
+            font-size: 24px;
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 32px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+            animation: fadeInUp 0.5s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .icon {
+            width: 24px;
+            height: 24px;
+            fill: #667eea;
+        }
+
+        .room-link-wrapper {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .room-link-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 14px;
+            background: #f8fafc;
+            color: #475569;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
+        }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #475569;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            margin-bottom: 12px;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-input[readonly] {
+            background: #f8fafc;
+            color: #64748b;
+        }
+
+        .inbox {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            min-height: 100px;
+        }
+
+        .inbox-item {
+            padding: 12px 16px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .inbox-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .inbox-item a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .inbox-item a:hover {
+            text-decoration: underline;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #94a3b8;
+            padding: 40px 20px;
+        }
+
+        @media (max-width: 768px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .room-link-wrapper {
+                flex-direction: column;
+            }
+        }
+    </style>
 </head>
 <body>
-<h2>Welcome, {{USER}}</h2>
-<h3>Your Room:</h3>
-<input style="width:80%" readonly value="{{ROOM_LINK}}">
-<br><br>
-<a href="{{ROOM_LINK}}">Enter Room</a>
+    <div class="container">
+        <div class="header">
+            <div class="user-greeting">
+                <div class="user-avatar" id="userAvatar">U</div>
+                <h1>Добро пожаловать, {{USER}}!</h1>
+            </div>
+        </div>
 
-<h3>Send Room Link to User:</h3>
-<form method="post" action="/send_link">
-    <input type="hidden" name="sender" value="{{USER}}">
-    <input name="recipient" placeholder="Recipient username" required>
-    <input name="link" value="{{ROOM_LINK}}" readonly>
-    <button type="submit">Send</button>
-</form>
+        <div class="content-grid">
+            <div class="card">
+                <div class="card-title">
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                    </svg>
+                    Ваша комната
+                </div>
+                <div class="room-link-wrapper">
+                    <input 
+                        type="text" 
+                        class="room-link-input" 
+                        value="{{ROOM_LINK}}" 
+                        readonly 
+                        id="roomLink"
+                    >
+                    <button 
+                        class="btn btn-secondary" 
+                        onclick="copyRoomLink()"
+                        title="Копировать ссылку"
+                    >
+                        Копировать
+                    </button>
+                </div>
+                <a href="{{ROOM_LINK}}" class="btn btn-primary" style="width: 100%; justify-content: center;">
+                    <svg class="icon" style="fill: white;" viewBox="0 0 24 24">
+                        <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                    </svg>
+                    Войти в комнату
+                </a>
+            </div>
 
-<h3>Inbox:</h3>
-<div>
-{{INBOX}}
-</div>
+            <div class="card">
+                <div class="card-title">
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                    </svg>
+                    Отправить ссылку
+                </div>
+                <form method="post" action="/send_link">
+                    <input type="hidden" name="sender" value="{{USER}}">
+                    <input 
+                        type="text" 
+                        name="recipient" 
+                        class="form-input" 
+                        placeholder="Имя получателя" 
+                        required
+                    >
+                    <input 
+                        type="hidden" 
+                        name="link" 
+                        value="{{ROOM_LINK}}"
+                    >
+                    <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">
+                        Отправить
+                    </button>
+                </form>
+            </div>
 
+            <div class="card">
+                <div class="card-title">
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                    </svg>
+                    Входящие сообщения
+                </div>
+                <div class="inbox">
+                    {{INBOX}}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function copyRoomLink() {
+            const input = document.getElementById('roomLink');
+            input.select();
+            input.setSelectionRange(0, 99999);
+            document.execCommand('copy');
+            
+            const btn = event.target.closest('button');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'Скопировано!';
+            btn.style.background = '#10b981';
+            btn.style.color = 'white';
+            
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.style.background = '';
+                btn.style.color = '';
+            }, 2000);
+        }
+
+        // Set user avatar
+        const user = '{{USER}}';
+        if (user) {
+            document.getElementById('userAvatar').textContent = user.charAt(0).toUpperCase();
+        }
+
+        // Format inbox messages
+        const inbox = document.querySelector('.inbox');
+        if (inbox && inbox.textContent.trim() !== 'No messages' && inbox.textContent.trim() !== '') {
+            const items = inbox.innerHTML.split('<br>').filter(item => item.trim());
+            inbox.innerHTML = items.map(item => {
+                const match = item.match(/From (.+?): (.+)/);
+                if (match) {
+                    return `<div class="inbox-item">
+                        <strong>${match[1]}:</strong> <a href="${match[2]}">${match[2]}</a>
+                    </div>`;
+                }
+                return `<div class="inbox-item">${item}</div>`;
+            }).join('');
+        } else {
+            inbox.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+        }
+    </script>
 </body>
 </html>
