@@ -673,28 +673,25 @@
 
                 if (data.type === "ice") {
                     console.log("Received ICE candidate from", from);
-                    const candidate = new RTCIceCandidate(data.candidate);
-                    // Если peer connection еще не создан, создаем его
-                    if (!pc && localStream) {
-                        console.log("Creating peer connection for", from, "after receiving ICE candidate");
-                        pc = await createPeer(from, true, data.from_username);
-                        peers[from] = pc;
+                    // Не создаем peer connection при получении ICE - он должен быть создан через offer или new_client
+                    if (!pc) {
+                        console.warn("Received ICE candidate but no peer connection exists for", from);
+                        return;
                     }
-                    if (pc) {
-                        if (pc.remoteDescription) {
-                            try {
-                                await pc.addIceCandidate(candidate);
-                                console.log("Added ICE candidate from", from);
-                            } catch (e) {
-                                console.error("Error adding ICE candidate:", e);
-                            }
-                        } else {
-                            if (!pc.pendingCandidates) {
-                                pc.pendingCandidates = [];
-                            }
-                            pc.pendingCandidates.push(candidate);
-                            console.log("Queued ICE candidate from", from, "(waiting for remote description)");
+                    const candidate = new RTCIceCandidate(data.candidate);
+                    if (pc.remoteDescription) {
+                        try {
+                            await pc.addIceCandidate(candidate);
+                            console.log("Added ICE candidate from", from);
+                        } catch (e) {
+                            console.error("Error adding ICE candidate:", e);
                         }
+                    } else {
+                        if (!pc.pendingCandidates) {
+                            pc.pendingCandidates = [];
+                        }
+                        pc.pendingCandidates.push(candidate);
+                        console.log("Queued ICE candidate from", from, "(waiting for remote description)");
                     }
                 }
 
