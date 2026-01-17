@@ -476,6 +476,7 @@
 
             // Храним все треки от удаленного клиента
             const remoteStream = new MediaStream();
+            pc.remoteStream = remoteStream; // Сохраняем в peer connection для доступа
             
             pc.ontrack = e => {
                 console.log("ontrack event received from", remote_id, "track:", e.track.kind, "streams:", e.streams.length);
@@ -564,12 +565,27 @@
                 console.log(`Connection state with ${remote_id}:`, pc.connectionState);
                 if (pc.connectionState === "failed") {
                     console.error("Connection failed, attempting restart");
-                    // Можно попробовать перезапустить
+                } else if (pc.connectionState === "connected") {
+                    console.log("✅ Connection established with", remote_id);
                 }
             };
 
             pc.oniceconnectionstatechange = () => {
                 console.log(`ICE connection state with ${remote_id}:`, pc.iceConnectionState);
+                if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+                    console.log("✅ ICE connection established with", remote_id);
+                    // Проверяем, есть ли треки
+                    if (pc.remoteStream) {
+                        console.log("Remote stream tracks:", pc.remoteStream.getTracks().length);
+                        pc.remoteStream.getTracks().forEach(track => {
+                            console.log("  - Track:", track.kind, track.id, "enabled:", track.enabled, "readyState:", track.readyState);
+                        });
+                    }
+                }
+            };
+
+            pc.onsignalingstatechange = () => {
+                console.log(`Signaling state with ${remote_id}:`, pc.signalingState);
             };
 
             return pc;
