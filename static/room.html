@@ -643,14 +643,18 @@
                 clientUsernames[from] = data.from_username;
             }
             
-            // Создаем peer connection только если его еще нет
-            // Если получаем offer - мы polite (принимаем offer)
-            // Если получаем ice candidate или answer - можем быть не polite (отправили offer)
-            if (!peers[from] && localStream) {
-                console.log("Creating peer connection for", from, "after receiving signal");
-                // Если получаем offer - мы polite
-                const isPolite = data.type === "offer";
-                peers[from] = await createPeer(from, isPolite, data.from_username);
+            // Для offer - создаем peer connection ДО обработки offer
+            if (data.type === "offer" && !peers[from] && localStream) {
+                console.log("Creating peer connection for", from, "after receiving offer");
+                peers[from] = await createPeer(from, true, data.from_username); // polite=true при получении offer
+            }
+            
+            // Для answer или ice - peer connection должен уже существовать
+            if (!peers[from]) {
+                if (data.type === "answer" || data.type === "ice") {
+                    console.warn("Received", data.type, "but no peer connection exists for", from);
+                    return;
+                }
             }
             
             const pc = peers[from];
@@ -661,7 +665,7 @@
 
             try {
                 if (data.type === "offer") {
-                    console.log("Received offer from", from);
+                    console.log("Received offer from", from, "peer connection state:", pc.signalingState);
                     const offerCollision = pc.makingOffer || pc.signalingState !== "stable";
                     pc.ignoreOffer = !pc.polite && offerCollision;
                     if (pc.ignoreOffer) {
@@ -669,6 +673,7 @@
                         return;
                     }
 
+                    console.log("Setting remote description (offer) from", from);
                     await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                     console.log("Set remote description from", from);
                     
