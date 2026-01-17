@@ -352,10 +352,11 @@
 
     <script>
         const room = new URLSearchParams(window.location.search).get("room");
+        const username = new URLSearchParams(window.location.search).get("user") || "Guest";
         document.getElementById("link").value = location.href;
 
         const protocol = location.protocol === "https:" ? "wss" : "ws";
-        const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}`);
+        const ws = new WebSocket(`${protocol}://${location.host}/ws/${room}?username=${encodeURIComponent(username)}`);
 
         const iceConfig = {
             iceServers: [
@@ -372,6 +373,8 @@
         const peers = {};
         const remoteVideos = {};
         let myClientId = null;
+        let myUsername = username;
+        const clientUsernames = {}; // client_id -> username
 
         function copyRoomLink() {
             const input = document.getElementById('link');
@@ -396,7 +399,7 @@
             }
         }
 
-        function addChatMessage(from, text, isOwn) {
+        function addChatMessage(from, text, isOwn, fromUsername = null) {
             const chat = document.getElementById('chat');
             if (chat.querySelector('.loading')) {
                 chat.innerHTML = '';
@@ -408,7 +411,7 @@
             if (!isOwn) {
                 const author = document.createElement('div');
                 author.className = 'chat-author';
-                author.textContent = `Пользователь ${from}`;
+                author.textContent = fromUsername || clientUsernames[from] || `Пользователь ${from}`;
                 messageDiv.appendChild(author);
             }
             
@@ -426,7 +429,7 @@
             const msg = input.value.trim();
             if (msg) {
                 ws.send(JSON.stringify({ chat: msg }));
-                addChatMessage(myClientId || 'Вы', msg, true);
+                addChatMessage(myClientId || 'Вы', msg, true, myUsername);
                 input.value = "";
             }
         }
@@ -442,10 +445,10 @@
         }
 
         // ----------------- WebRTC -----------------
-        function createVideoElement(id) {
+        function createVideoElement(id, username) {
             const wrapper = document.createElement('div');
             wrapper.className = 'video-wrapper';
-            wrapper.setAttribute('data-label', `Участник ${id}`);
+            wrapper.setAttribute('data-label', username || `Участник ${id}`);
             
             const video = document.createElement("video");
             video.autoplay = true;
@@ -457,15 +460,28 @@
             return video;
         }
 
-        async function createPeer(remote_id, polite) {
+        async function createPeer(remote_id, polite, remoteUsername = null) {
+            if (!localStream) {
+                console.error("Local stream not ready yet");
+                return null;
+            }
+            
             const pc = new RTCPeerConnection(iceConfig);
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            
+            // Добавляем все треки из локального стрима
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+            });
 
             pc.ontrack = e => {
+                console.log("Received track from", remote_id, e.streams);
                 if (!remoteVideos[remote_id]) {
-                    remoteVideos[remote_id] = createVideoElement(remote_id);
+                    const username = remoteUsername || clientUsernames[remote_id] || `User ${remote_id}`;
+                    remoteVideos[remote_id] = createVideoElement(remote_id, username);
                 }
-                remoteVideos[remote_id].srcObject = e.streams[0];
+                if (e.streams && e.streams[0]) {
+                    remoteVideos[remote_id].srcObject = e.streams[0];
+                }
             };
 
             pc.onicecandidate = ({ candidate }) => {
@@ -499,9 +515,26 @@
             const data = JSON.parse(msg.data);
 
             if (data.type === "existing") {
-                for (const cid of data.clients) {
-                    if (!peers[cid]) {
-                        peers[cid] = await createPeer(cid, true);
+                myClientId = data.your_id;
+                myUsername = data.your_username || myUsername;
+                
+                // Обновляем метку для локального видео
+                const localWrapper = document.querySelector('.video-wrapper.local');
+                if (localWrapper) {
+                    localWrapper.setAttribute('data-label', myUsername);
+                }
+                
+                // Создаем peer connections для существующих клиентов
+                for (const client of data.clients) {
+                    const cid = typeof client === 'string' ? client : client.id;
+                    const clientUsername = typeof client === 'object' ? client.username : null;
+                    
+                    if (clientUsername) {
+                        clientUsernames[cid] = clientUsername;
+                    }
+                    
+                    if (!peers[cid] && localStream) {
+                        peers[cid] = await createPeer(cid, true, clientUsername);
                     }
                 }
                 return;
@@ -509,10 +542,18 @@
 
             const from = data.from;
             if (!from) return;
-            if (!peers[from]) {
-                peers[from] = await createPeer(from, true);
+            
+            // Сохраняем имя пользователя
+            if (data.from_username) {
+                clientUsernames[from] = data.from_username;
             }
+            
+            if (!peers[from] && localStream) {
+                peers[from] = await createPeer(from, true, data.from_username);
+            }
+            
             const pc = peers[from];
+            if (!pc) return;
 
             try {
                 if (data.type === "offer") {
@@ -544,7 +585,7 @@
                 }
 
                 if (data.chat) {
-                    addChatMessage(from, data.chat, false);
+                    addChatMessage(from, data.chat, false, data.from_username);
                 }
             } catch (e) {
                 console.error(e);
@@ -555,8 +596,12 @@
         document.getElementById("sendChat").onclick = sendChatMessage;
 
         ws.onopen = async () => {
+            // Инициализируем локальный стрим перед отправкой join
             await initLocal();
-            ws.send(JSON.stringify({ type: "join" }));
+            // Небольшая задержка, чтобы стрим точно был готов
+            setTimeout(() => {
+                ws.send(JSON.stringify({ type: "join" }));
+            }, 100);
         };
 
         ws.onerror = (error) => {
