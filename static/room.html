@@ -632,26 +632,26 @@
                 clientUsernames[from] = data.from_username;
             }
 
-            // Создаем peer connection если его нет (при получении offer или ice)
-            if (!peerConnections[from]) {
+            // Обработка offer - создаем peer connection и отвечаем
+            if (data.type === "offer") {
                 if (!localStream) {
-                    console.error(`❌ Cannot create peer connection for ${from} - localStream not ready`);
+                    console.error(`❌ Cannot handle offer from ${from} - localStream not ready`);
                     return;
                 }
-                console.log(`🔗 Creating peer connection for ${from} (received ${data.type})`);
-                // Если получаем offer - мы не offerer, если ice - тоже не offerer
-                peerConnections[from] = await createPeerConnection(from, data.from_username, false);
-            }
+                
+                // Создаем peer connection если его нет
+                if (!peerConnections[from]) {
+                    console.log(`🔗 Creating peer connection for ${from} (received offer)`);
+                    peerConnections[from] = await createPeerConnection(from, data.from_username, false);
+                }
 
-            const pc = peerConnections[from];
-            if (!pc) {
-                console.error(`❌ No peer connection for ${from}`);
-                return;
-            }
+                const pc = peerConnections[from];
+                if (!pc) {
+                    console.error(`❌ Failed to create peer connection for ${from}`);
+                    return;
+                }
 
-            try {
-                // Обработка offer
-                if (data.type === "offer") {
+                try {
                     console.log(`📥 Received offer from ${from}`);
                     await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                     console.log(`  ✅ Set remote description (offer)`);
@@ -679,7 +679,31 @@
                         to: from
                     }));
                     console.log(`  ✅ Answer sent to ${from}`);
+                    return; // Важно: выходим после обработки offer
+                } catch (error) {
+                    console.error(`❌ Error processing offer from ${from}:`, error);
+                    return;
                 }
+            }
+
+            // Для остальных сигналов peer connection должен уже существовать
+            if (!peerConnections[from]) {
+                if (data.type === "ice") {
+                    // Если получаем ICE до offer, сохраняем для будущего peer connection
+                    console.log(`⏳ Received ICE from ${from} but no peer connection yet - will create when offer arrives`);
+                    return;
+                }
+                console.error(`❌ No peer connection for ${from} (received ${data.type})`);
+                return;
+            }
+
+            const pc = peerConnections[from];
+            if (!pc) {
+                console.error(`❌ Peer connection is null for ${from}`);
+                return;
+            }
+
+            try {
 
                 // Обработка answer
                 if (data.type === "answer") {
