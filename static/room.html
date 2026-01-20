@@ -707,7 +707,13 @@
             // Обработка offer - приоритетная
             if (data.type === "offer") {
                 console.log(`📥 Processing offer from ${from}`);
-                await handleOffer(from, data.offer, data.from_username);
+                console.log(`  Local stream ready: ${!!localStream}`);
+                console.log(`  Offer SDP type: ${data.offer?.type}`);
+                try {
+                    await handleOffer(from, data.offer, data.from_username);
+                } catch (error) {
+                    console.error(`❌ Fatal error in handleOffer:`, error);
+                }
                 return; // Важно: выходим после обработки offer
             }
 
