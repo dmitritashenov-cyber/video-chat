@@ -373,6 +373,7 @@
         const remoteStreams = {}; // clientId -> MediaStream
         const remoteVideos = {}; // clientId -> video element
         const clientUsernames = {}; // clientId -> username
+        const pendingOffers = {}; // clientId -> {offer, fromUsername} - offers полученные до готовности localStream
 
         // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
         function copyRoomLink() {
@@ -435,6 +436,17 @@
                 });
                 document.getElementById("localVideo").srcObject = localStream;
                 console.log("✅ Local stream ready:", localStream.getTracks().length, "tracks");
+                
+                // Обрабатываем pending offers
+                if (Object.keys(pendingOffers).length > 0) {
+                    console.log(`📬 Processing ${Object.keys(pendingOffers).length} pending offers`);
+                    for (const [clientId, offerData] of Object.entries(pendingOffers)) {
+                        console.log(`  Processing pending offer from ${clientId}`);
+                        await handleOffer(clientId, offerData.offer, offerData.fromUsername);
+                    }
+                    Object.keys(pendingOffers).forEach(key => delete pendingOffers[key]);
+                }
+                
                 return true;
             } catch (error) {
                 console.error("❌ Error accessing media:", error);
@@ -539,17 +551,9 @@
 
             // Проверяем готовность localStream
             if (!localStream) {
-                console.error("❌ Cannot handle offer - localStream not ready");
-                // Ждем готовности localStream
-                let attempts = 0;
-                while (!localStream && attempts < 50) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    attempts++;
-                }
-                if (!localStream) {
-                    console.error("❌ localStream still not ready after waiting");
-                    return;
-                }
+                console.warn("⏳ localStream not ready yet, saving offer for later");
+                pendingOffers[from] = { offer, fromUsername };
+                return;
             }
 
             // Создаем peer connection если его нет
