@@ -281,6 +281,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                         "client": new_client_info
                     })
                 )
+                logger.info(f"Notified client {cid} about new client {client_id} ({username or 'no username'})")
             except Exception as e:
                 logger.warning(f"Failed to notify client {cid} about new client: {e}")
     
@@ -331,8 +332,12 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                 
                 # Обработка WebRTC сигналов
                 else:
+                    signal_type = msg_obj.get("type", "unknown")
                     target_client = msg_obj.get("to")
                     sender_username = room_users[room_id].get(client_id, f"User {client_id}")
+                    
+                    logger.info(f"WebRTC signal: {signal_type} from {client_id} ({sender_username}) to {target_client or 'all'}")
+                    
                     broadcast_message = json.dumps({
                         "from": client_id,
                         "from_username": sender_username,
@@ -345,6 +350,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                         if cid != client_id and (not target_client or cid == target_client):
                             try:
                                 await ws.send_text(broadcast_message)
+                                logger.info(f"Sent {signal_type} to {cid}")
                             except Exception as e:
                                 logger.warning(f"Failed to send WebRTC signal to {cid}: {e}")
                                 disconnected_clients.append(cid)

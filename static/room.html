@@ -474,38 +474,15 @@
                 console.log("Added track:", track.kind, "to peer", remote_id);
             });
 
-            // Храним все треки от удаленного клиента
-            const remoteStream = new MediaStream();
-            pc.remoteStream = remoteStream; // Сохраняем в peer connection для доступа
-            
             pc.ontrack = e => {
-                console.log("ontrack event received from", remote_id, "track:", e.track.kind, "streams:", e.streams.length);
-                if (e.streams && e.streams.length > 0) {
-                    e.streams[0].getTracks().forEach(track => {
-                        console.log("Adding track to remote stream:", track.kind, track.id);
-                        if (remoteStream.getTracks().find(t => t.id === track.id)) {
-                            console.log("Track already in stream, skipping");
-                        } else {
-                            remoteStream.addTrack(track);
-                        }
-                    });
-                } else if (e.track) {
-                    console.log("Adding track directly to remote stream:", e.track.kind, e.track.id);
-                    if (!remoteStream.getTracks().find(t => t.id === e.track.id)) {
-                        remoteStream.addTrack(e.track);
-                    }
-                }
-                
-                // Создаем или обновляем видео элемент
+                console.log("Received track from", remote_id, "track kind:", e.track.kind, "streams:", e.streams.length);
                 if (!remoteVideos[remote_id]) {
                     const username = remoteUsername || clientUsernames[remote_id] || `User ${remote_id}`;
                     remoteVideos[remote_id] = createVideoElement(remote_id, username);
                 }
-                
-                // Устанавливаем stream на video элемент
-                if (remoteStream.getTracks().length > 0) {
-                    remoteVideos[remote_id].srcObject = remoteStream;
-                    console.log("Set remote video srcObject for", remote_id, "total tracks:", remoteStream.getTracks().length);
+                if (e.streams && e.streams[0]) {
+                    remoteVideos[remote_id].srcObject = e.streams[0];
+                    console.log("Set remote video srcObject for", remote_id, "stream tracks:", e.streams[0].getTracks().length);
                 }
             };
 
@@ -565,27 +542,12 @@
                 console.log(`Connection state with ${remote_id}:`, pc.connectionState);
                 if (pc.connectionState === "failed") {
                     console.error("Connection failed, attempting restart");
-                } else if (pc.connectionState === "connected") {
-                    console.log("✅ Connection established with", remote_id);
+                    // Можно попробовать перезапустить
                 }
             };
 
             pc.oniceconnectionstatechange = () => {
                 console.log(`ICE connection state with ${remote_id}:`, pc.iceConnectionState);
-                if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
-                    console.log("✅ ICE connection established with", remote_id);
-                    // Проверяем, есть ли треки
-                    if (pc.remoteStream) {
-                        console.log("Remote stream tracks:", pc.remoteStream.getTracks().length);
-                        pc.remoteStream.getTracks().forEach(track => {
-                            console.log("  - Track:", track.kind, track.id, "enabled:", track.enabled, "readyState:", track.readyState);
-                        });
-                    }
-                }
-            };
-
-            pc.onsignalingstatechange = () => {
-                console.log(`Signaling state with ${remote_id}:`, pc.signalingState);
             };
 
             return pc;
@@ -599,6 +561,9 @@
                 myClientId = data.your_id;
                 myUsername = data.your_username || myUsername;
                 
+                console.log("Received existing clients list:", data.clients.length, "clients");
+                console.log("My ID:", myClientId, "My username:", myUsername);
+                
                 // Обновляем метку для локального видео
                 const localWrapper = document.querySelector('.video-wrapper.local');
                 if (localWrapper) {
@@ -607,14 +572,18 @@
                 
                 // Сохраняем информацию о существующих клиентах, но НЕ создаем peer connections сразу
                 // Существующие клиенты сами создадут peer connection и отправят offer
+                // Мы будем ждать offer и создадим peer connection при его получении
                 for (const client of data.clients) {
                     const cid = typeof client === 'string' ? client : client.id;
                     const clientUsername = typeof client === 'object' ? client.username : null;
+                    
+                    console.log("Existing client:", cid, clientUsername);
                     
                     if (clientUsername) {
                         clientUsernames[cid] = clientUsername;
                     }
                 }
+                console.log("Waiting for offers from existing clients...");
                 return;
             }
 
@@ -623,12 +592,27 @@
                 const newClientId = typeof data.client === 'string' ? data.client : data.client.id;
                 const newClientUsername = typeof data.client === 'object' ? data.client.username : null;
                 
+                console.log("Received new_client notification:", newClientId, newClientUsername);
+                
                 if (newClientUsername) {
                     clientUsernames[newClientId] = newClientUsername;
                 }
                 
                 // Существующий клиент создает peer connection и отправляет offer
-                if (!peers[newClientId] && localStream) {
+                if (!localStream) {
+                    console.error("Cannot create peer for new client - localStream not ready yet");
+                    // Ждем готовности localStream
+                    const checkStream = setInterval(() => {
+                        if (localStream && !peers[newClientId]) {
+                            console.log("Local stream ready, creating peer for new client:", newClientId);
+                            clearInterval(checkStream);
+                            createPeer(newClientId, false, newClientUsername).then(pc => {
+                                if (pc) peers[newClientId] = pc;
+                            });
+                        }
+                    }, 100);
+                    setTimeout(() => clearInterval(checkStream), 5000); // Таймаут 5 секунд
+                } else if (!peers[newClientId]) {
                     console.log("Creating peer for new client:", newClientId);
                     peers[newClientId] = await createPeer(newClientId, false, newClientUsername);
                 }
@@ -643,18 +627,14 @@
                 clientUsernames[from] = data.from_username;
             }
             
-            // Для offer - создаем peer connection ДО обработки offer
-            if (data.type === "offer" && !peers[from] && localStream) {
-                console.log("Creating peer connection for", from, "after receiving offer");
-                peers[from] = await createPeer(from, true, data.from_username); // polite=true при получении offer
-            }
-            
-            // Для answer или ice - peer connection должен уже существовать
-            if (!peers[from]) {
-                if (data.type === "answer" || data.type === "ice") {
-                    console.warn("Received", data.type, "but no peer connection exists for", from);
-                    return;
-                }
+            // Создаем peer connection только если его еще нет
+            // Если получаем offer - мы polite (принимаем offer)
+            // Если получаем ice candidate или answer - можем быть не polite (отправили offer)
+            if (!peers[from] && localStream) {
+                console.log("Creating peer connection for", from, "after receiving signal");
+                // Если получаем offer - мы polite
+                const isPolite = data.type === "offer";
+                peers[from] = await createPeer(from, isPolite, data.from_username);
             }
             
             const pc = peers[from];
@@ -665,7 +645,7 @@
 
             try {
                 if (data.type === "offer") {
-                    console.log("Received offer from", from, "peer connection state:", pc.signalingState);
+                    console.log("Received offer from", from);
                     const offerCollision = pc.makingOffer || pc.signalingState !== "stable";
                     pc.ignoreOffer = !pc.polite && offerCollision;
                     if (pc.ignoreOffer) {
@@ -673,7 +653,6 @@
                         return;
                     }
 
-                    console.log("Setting remote description (offer) from", from);
                     await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                     console.log("Set remote description from", from);
                     
@@ -750,12 +729,15 @@
         document.getElementById("sendChat").onclick = sendChatMessage;
 
         ws.onopen = async () => {
+            console.log("WebSocket opened, initializing local stream...");
             // Инициализируем локальный стрим перед отправкой join
             await initLocal();
+            console.log("Local stream initialized, tracks:", localStream ? localStream.getTracks().length : 0);
             // Небольшая задержка, чтобы стрим точно был готов
             setTimeout(() => {
+                console.log("Sending join message");
                 ws.send(JSON.stringify({ type: "join" }));
-            }, 100);
+            }, 500); // Увеличил задержку до 500мс
         };
 
         ws.onerror = (error) => {
