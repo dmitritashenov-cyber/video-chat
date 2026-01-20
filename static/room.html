@@ -466,26 +466,44 @@
             
             const pc = new RTCPeerConnection(iceConfig);
             
+            // Создаем MediaStream для удаленных треков
+            const remoteStream = new MediaStream();
+            pc.remoteStream = remoteStream;
+            
             // Добавляем все локальные треки
             localStream.getTracks().forEach(track => {
                 pc.addTrack(track, localStream);
-                console.log(`  ➕ Added local ${track.kind} track`);
+                console.log(`  ➕ Added local ${track.kind} track (ID: ${track.id})`);
             });
 
             // Обработка удаленных треков
             pc.ontrack = (event) => {
                 console.log(`📹 Received ${event.track.kind} track from ${remoteClientId}`);
-                console.log(`  Streams: ${event.streams.length}, Track ID: ${event.track.id}`);
+                console.log(`  Track ID: ${event.track.id}, enabled: ${event.track.enabled}, readyState: ${event.track.readyState}`);
+                console.log(`  Streams: ${event.streams.length}`);
                 
+                // Добавляем трек в remote stream
+                if (event.track && !remoteStream.getTracks().find(t => t.id === event.track.id)) {
+                    remoteStream.addTrack(event.track);
+                    console.log(`  ➕ Added ${event.track.kind} track to remote stream`);
+                }
+                
+                // Создаем или обновляем video элемент
                 if (!remoteVideos[remoteClientId]) {
                     const username = remoteUsername || clientUsernames[remoteClientId] || `User ${remoteClientId}`;
                     remoteVideos[remoteClientId] = createVideoElement(remoteClientId, username);
+                    console.log(`  🎥 Created video element for ${remoteClientId}`);
                 }
                 
-                if (event.streams && event.streams.length > 0) {
-                    const stream = event.streams[0];
-                    remoteVideos[remoteClientId].srcObject = stream;
-                    console.log(`  ✅ Video element updated with stream (${stream.getTracks().length} tracks)`);
+                // Устанавливаем stream на video элемент
+                if (remoteStream.getTracks().length > 0) {
+                    remoteVideos[remoteClientId].srcObject = remoteStream;
+                    console.log(`  ✅ Video element updated with remote stream (${remoteStream.getTracks().length} tracks)`);
+                    
+                    // Проверяем состояние треков
+                    remoteStream.getTracks().forEach(track => {
+                        console.log(`    Track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+                    });
                 }
             };
 
@@ -579,15 +597,23 @@
 
             // Обработка WebRTC сигналов
             const from = data.from;
-            if (!from) return;
+            if (!from) {
+                console.warn("⚠️ Received message without 'from' field");
+                return;
+            }
 
             if (data.from_username) {
                 clientUsernames[from] = data.from_username;
             }
 
-            // Создаем peer connection если его нет (при получении offer)
-            if (!peerConnections[from] && localStream) {
+            // Создаем peer connection если его нет (при получении offer или ice)
+            if (!peerConnections[from]) {
+                if (!localStream) {
+                    console.error(`❌ Cannot create peer connection for ${from} - localStream not ready`);
+                    return;
+                }
                 console.log(`🔗 Creating peer connection for ${from} (received ${data.type})`);
+                // Если получаем offer - мы не offerer, если ice - тоже не offerer
                 peerConnections[from] = await createPeerConnection(from, data.from_username, false);
             }
 
@@ -651,17 +677,21 @@
 
                 // Обработка ICE кандидатов
                 if (data.type === "ice") {
-                    const candidate = new RTCIceCandidate(data.candidate);
-                    if (pc.remoteDescription) {
-                        await pc.addIceCandidate(candidate);
-                        console.log(`  ✅ Added ICE candidate from ${from}`);
-                    } else {
-                        // Сохраняем кандидаты если remote description еще не установлен
-                        if (!pc.pendingCandidates) {
-                            pc.pendingCandidates = [];
+                    try {
+                        const candidate = new RTCIceCandidate(data.candidate);
+                        if (pc.remoteDescription) {
+                            await pc.addIceCandidate(candidate);
+                            console.log(`  ✅ Added ICE candidate from ${from}`);
+                        } else {
+                            // Сохраняем кандидаты если remote description еще не установлен
+                            if (!pc.pendingCandidates) {
+                                pc.pendingCandidates = [];
+                            }
+                            pc.pendingCandidates.push(candidate);
+                            console.log(`  ⏳ Queued ICE candidate from ${from} (waiting for remote description)`);
                         }
-                        pc.pendingCandidates.push(candidate);
-                        console.log(`  ⏳ Queued ICE candidate from ${from}`);
+                    } catch (error) {
+                        console.error(`❌ Error adding ICE candidate:`, error);
                     }
                 }
 
