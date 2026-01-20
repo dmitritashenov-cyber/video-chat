@@ -450,6 +450,24 @@
             video.autoplay = true;
             video.playsInline = true;
             video.id = `video-${clientId}`;
+            
+            // Добавляем обработчики событий для диагностики
+            video.onloadedmetadata = () => {
+                console.log(`📺 Video metadata loaded for ${clientId}`);
+            };
+            
+            video.onplay = () => {
+                console.log(`▶️ Video started playing for ${clientId}`);
+            };
+            
+            video.onerror = (error) => {
+                console.error(`❌ Video error for ${clientId}:`, error);
+            };
+            
+            video.oncanplay = () => {
+                console.log(`✅ Video can play for ${clientId}`);
+            };
+            
             wrapper.appendChild(video);
             document.getElementById("remotes").appendChild(wrapper);
             return video;
@@ -497,12 +515,20 @@
                 
                 // Устанавливаем stream на video элемент
                 if (remoteStream.getTracks().length > 0) {
-                    remoteVideos[remoteClientId].srcObject = remoteStream;
+                    const videoElement = remoteVideos[remoteClientId];
+                    videoElement.srcObject = remoteStream;
                     console.log(`  ✅ Video element updated with remote stream (${remoteStream.getTracks().length} tracks)`);
                     
                     // Проверяем состояние треков
                     remoteStream.getTracks().forEach(track => {
                         console.log(`    Track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+                    });
+                    
+                    // Пытаемся запустить воспроизведение
+                    videoElement.play().then(() => {
+                        console.log(`  ▶️ Video play() succeeded for ${remoteClientId}`);
+                    }).catch(error => {
+                        console.error(`  ❌ Video play() failed for ${remoteClientId}:`, error);
                     });
                 }
             };
