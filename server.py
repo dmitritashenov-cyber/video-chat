@@ -29,10 +29,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware для работы с различными доменами
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # В продакшене лучше указать конкретные домены
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,19 +49,14 @@ else:
 USERS_FILE = Path("users.json")
 ROOMS_FILE = Path("user_rooms.json")
 
-# -----------------------------
-# Хранилище данных (в продакшене лучше использовать БД)
-# -----------------------------
-users: Dict[str, str] = {}  # username -> password
-user_rooms: Dict[str, str] = {}  # username -> room_id
-messages: Dict[str, List[str]] = defaultdict(list)  # username -> list of notifications/links
-rooms: Dict[str, Dict[str, WebSocket]] = defaultdict(dict)  # room_id -> {client_id: WebSocket}
-room_users: Dict[str, Dict[str, str]] = defaultdict(dict)  # room_id -> {client_id: username}
+# Хранилище данных
+users: Dict[str, str] = {}
+user_rooms: Dict[str, str] = {}
+messages: Dict[str, List[str]] = defaultdict(list)
+rooms: Dict[str, Dict[str, WebSocket]] = defaultdict(dict)
+room_users: Dict[str, Dict[str, str]] = defaultdict(dict)
 
 
-# -----------------------------
-# Функции для работы с данными
-# -----------------------------
 def load_users():
     """Загрузка пользователей из файла."""
     global users
@@ -69,10 +64,8 @@ def load_users():
         try:
             with open(USERS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Поддержка старого формата
                 if isinstance(data, dict):
                     if "Dmitry" in data and isinstance(data["Dmitry"], dict):
-                        # Старый формат
                         users = {k: v.get("password", "") for k, v in data.items()}
                     else:
                         users = data
@@ -115,14 +108,10 @@ def save_user_rooms():
         logger.error(f"Error saving user rooms: {e}")
 
 
-# Загрузка данных при старте
 load_users()
 load_user_rooms()
 
 
-# -----------------------------
-# Вспомогательные функции
-# -----------------------------
 def load_static_file(filename: str) -> str:
     """Безопасная загрузка статических HTML файлов."""
     file_path = static_dir / filename
@@ -146,9 +135,6 @@ def validate_username(username: str) -> bool:
     return True
 
 
-# -----------------------------
-# API маршруты
-# -----------------------------
 @app.get("/", response_class=HTMLResponse)
 async def login_page():
     """Главная страница входа."""
@@ -174,12 +160,10 @@ async def login(username: str = Form(...), password: str = Form(...)):
             detail="Password must be at least 3 characters"
         )
     
-    # Регистрация нового пользователя
     if username not in users:
         users[username] = password
         save_users()
         logger.info(f"New user registered: {username}")
-    # Проверка пароля существующего пользователя
     elif users[username] != password:
         logger.warning(f"Invalid password attempt for user: {username}")
         raise HTTPException(status_code=401, detail="Wrong password")
@@ -196,7 +180,6 @@ async def dashboard(user: str):
     try:
         html = load_static_file("dashboard.html")
         
-        # Получаем или создаем room_id для пользователя
         if user not in user_rooms:
             room_id = uuid.uuid4().hex[:8]
             user_rooms[user] = room_id
@@ -206,7 +189,6 @@ async def dashboard(user: str):
         
         link = f"/static/room.html?room={room_id}&user={user}"
         
-        # Безопасная замена шаблонов
         html = html.replace("{{USER}}", user)
         html = html.replace("{{ROOM_LINK}}", link)
         
@@ -231,7 +213,6 @@ async def send_link(
     
     if recipient not in users:
         logger.warning(f"Attempt to send link to non-existent user: {recipient}")
-        # Не показываем, что пользователь не существует (для безопасности)
         return RedirectResponse(url=f"/dashboard?user={sender}", status_code=302)
     
     if recipient != sender:
@@ -241,17 +222,13 @@ async def send_link(
     return RedirectResponse(url=f"/dashboard?user={sender}", status_code=302)
 
 
-# -----------------------------
-# WebSocket для комнаты и чата
-# -----------------------------
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str = Query(None)):
-    """WebSocket endpoint для видеокомнаты с WebRTC сигнализацией."""
+    """WebSocket endpoint для видеокомнаты."""
     await websocket.accept()
     client_id = uuid.uuid4().hex[:8]
     rooms[room_id][client_id] = websocket
     
-    # Сохраняем имя пользователя для этого клиента
     if username:
         room_users[room_id][client_id] = username
         logger.info(f"User {username} (client {client_id}) joined room {room_id}")
@@ -281,7 +258,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                         "client": new_client_info
                     })
                 )
-                logger.info(f"Notified client {cid} about new client {client_id} ({username or 'no username'})")
+                logger.info(f"Notified client {cid} about new client {client_id}")
             except Exception as e:
                 logger.warning(f"Failed to notify client {cid} about new client: {e}")
     
@@ -315,7 +292,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                             "chat": chat_message
                         })
                         
-                        # Отправка сообщения чата всем остальным клиентам
                         disconnected_clients = []
                         for cid, ws in rooms[room_id].items():
                             if cid != client_id:
@@ -325,7 +301,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                                     logger.warning(f"Failed to send chat message to {cid}: {e}")
                                     disconnected_clients.append(cid)
                         
-                        # Очистка отключенных клиентов
                         for cid in disconnected_clients:
                             rooms[room_id].pop(cid, None)
                             room_users[room_id].pop(cid, None)
@@ -344,7 +319,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                         **msg_obj
                     })
                     
-                    # Отправка сигнала конкретному клиенту или всем остальным
                     disconnected_clients = []
                     for cid, ws in rooms[room_id].items():
                         if cid != client_id and (not target_client or cid == target_client):
@@ -355,25 +329,21 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
                                 logger.warning(f"Failed to send WebRTC signal to {cid}: {e}")
                                 disconnected_clients.append(cid)
                     
-                    # Очистка отключенных клиентов
                     for cid in disconnected_clients:
                         rooms[room_id].pop(cid, None)
                         room_users[room_id].pop(cid, None)
             
             except json.JSONDecodeError:
                 logger.warning(f"Invalid JSON received from {client_id}: {data}")
-                # Пропускаем невалидный JSON
     
     except WebSocketDisconnect:
         logger.info(f"Client {client_id} disconnected from room {room_id}")
     except Exception as e:
         logger.error(f"Error in websocket for client {client_id}: {e}")
     finally:
-        # Очистка при отключении
         rooms[room_id].pop(client_id, None)
         room_users[room_id].pop(client_id, None)
         
-        # Удаление пустых комнат (опционально, можно оставить для будущих подключений)
         if not rooms[room_id]:
             rooms.pop(room_id, None)
             room_users.pop(room_id, None)
@@ -382,9 +352,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str =
         logger.info(f"Client {client_id} left room {room_id}. Remaining clients: {len(rooms.get(room_id, {}))}")
 
 
-# -----------------------------
-# Health check endpoint для Render
-# -----------------------------
 @app.get("/health")
 async def health_check():
     """Health check endpoint для мониторинга."""
@@ -398,7 +365,6 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     
-    # Получение порта из переменной окружения (для Render)
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     

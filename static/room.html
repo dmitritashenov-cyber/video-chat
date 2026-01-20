@@ -346,7 +346,7 @@
     </div>
 
     <script>
-        // ==================== ИНИЦИАЛИЗАЦИЯ ====================
+        // ==================== КОНФИГУРАЦИЯ ====================
         const room = new URLSearchParams(window.location.search).get("room");
         const username = new URLSearchParams(window.location.search).get("user") || "Guest";
         document.getElementById("link").value = location.href;
@@ -367,10 +367,11 @@
 
         // ==================== СОСТОЯНИЕ ====================
         let localStream = null;
-        const peerConnections = {}; // clientId -> RTCPeerConnection
-        const remoteVideos = {}; // clientId -> video element
         let myClientId = null;
         let myUsername = username;
+        const peerConnections = {}; // clientId -> RTCPeerConnection
+        const remoteStreams = {}; // clientId -> MediaStream
+        const remoteVideos = {}; // clientId -> video element
         const clientUsernames = {}; // clientId -> username
 
         // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
@@ -429,11 +430,11 @@
         async function initLocalStream() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 1280, height: 720 },
+                    video: true,
                     audio: true 
                 });
                 document.getElementById("localVideo").srcObject = localStream;
-                console.log("✅ Local stream initialized:", localStream.getTracks().length, "tracks");
+                console.log("✅ Local stream ready:", localStream.getTracks().length, "tracks");
                 return true;
             } catch (error) {
                 console.error("❌ Error accessing media:", error);
@@ -450,100 +451,64 @@
             video.autoplay = true;
             video.playsInline = true;
             video.id = `video-${clientId}`;
-            
-            // Добавляем обработчики событий для диагностики
-            video.onloadedmetadata = () => {
-                console.log(`📺 Video metadata loaded for ${clientId}`);
-            };
-            
-            video.onplay = () => {
-                console.log(`▶️ Video started playing for ${clientId}`);
-            };
-            
-            video.onerror = (error) => {
-                console.error(`❌ Video error for ${clientId}:`, error);
-            };
-            
-            video.oncanplay = () => {
-                console.log(`✅ Video can play for ${clientId}`);
-            };
-            
             wrapper.appendChild(video);
             document.getElementById("remotes").appendChild(wrapper);
             return video;
         }
 
         // ==================== WEBRTC ====================
-        async function createPeerConnection(remoteClientId, remoteUsername, isOfferer) {
+        function createPeerConnection(remoteClientId, remoteUsername) {
             if (!localStream) {
                 console.error("❌ Cannot create peer - localStream not ready");
                 return null;
             }
 
-            console.log(`🔗 Creating peer connection to ${remoteClientId} (offerer: ${isOfferer})`);
-            
+            console.log(`🔗 Creating peer connection to ${remoteClientId}`);
+
             const pc = new RTCPeerConnection(iceConfig);
-            
-            // Создаем MediaStream для удаленных треков
             const remoteStream = new MediaStream();
-            pc.remoteStream = remoteStream;
-            
-            // Добавляем все локальные треки
+            remoteStreams[remoteClientId] = remoteStream;
+
+            // Добавляем локальные треки
             localStream.getTracks().forEach(track => {
                 pc.addTrack(track, localStream);
-                console.log(`  ➕ Added local ${track.kind} track (ID: ${track.id})`);
+                console.log(`  ➕ Added local ${track.kind} track`);
             });
 
             // Обработка удаленных треков
             pc.ontrack = (event) => {
                 console.log(`📹 Received ${event.track.kind} track from ${remoteClientId}`);
-                console.log(`  Track ID: ${event.track.id}, enabled: ${event.track.enabled}, readyState: ${event.track.readyState}`);
-                console.log(`  Streams: ${event.streams.length}`);
                 
                 // Добавляем трек в remote stream
                 if (event.track && !remoteStream.getTracks().find(t => t.id === event.track.id)) {
                     remoteStream.addTrack(event.track);
                     console.log(`  ➕ Added ${event.track.kind} track to remote stream`);
                 }
-                
+
                 // Создаем или обновляем video элемент
                 if (!remoteVideos[remoteClientId]) {
                     const username = remoteUsername || clientUsernames[remoteClientId] || `User ${remoteClientId}`;
                     remoteVideos[remoteClientId] = createVideoElement(remoteClientId, username);
-                    console.log(`  🎥 Created video element for ${remoteClientId}`);
                 }
-                
-                // Устанавливаем stream на video элемент
+
+                // Устанавливаем stream на video
                 if (remoteStream.getTracks().length > 0) {
-                    const videoElement = remoteVideos[remoteClientId];
-                    videoElement.srcObject = remoteStream;
-                    console.log(`  ✅ Video element updated with remote stream (${remoteStream.getTracks().length} tracks)`);
-                    
-                    // Проверяем состояние треков
-                    remoteStream.getTracks().forEach(track => {
-                        console.log(`    Track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+                    remoteVideos[remoteClientId].srcObject = remoteStream;
+                    remoteVideos[remoteClientId].play().catch(err => {
+                        console.error("Error playing video:", err);
                     });
-                    
-                    // Пытаемся запустить воспроизведение
-                    videoElement.play().then(() => {
-                        console.log(`  ▶️ Video play() succeeded for ${remoteClientId}`);
-                    }).catch(error => {
-                        console.error(`  ❌ Video play() failed for ${remoteClientId}:`, error);
-                    });
+                    console.log(`  ✅ Video updated (${remoteStream.getTracks().length} tracks)`);
                 }
             };
 
             // Отправка ICE кандидатов
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    console.log(`🧊 Sending ICE candidate to ${remoteClientId}`);
                     ws.send(JSON.stringify({
                         type: "ice",
                         candidate: event.candidate,
                         to: remoteClientId
                     }));
-                } else {
-                    console.log(`🧊 ICE gathering complete for ${remoteClientId}`);
                 }
             };
 
@@ -553,35 +518,82 @@
             };
 
             pc.oniceconnectionstatechange = () => {
-                console.log(`🧊 ICE connection state with ${remoteClientId}: ${pc.iceConnectionState}`);
+                console.log(`🧊 ICE state with ${remoteClientId}: ${pc.iceConnectionState}`);
             };
-
-            // Если мы offerer - создаем и отправляем offer
-            if (isOfferer) {
-                try {
-                    console.log(`📤 Creating offer for ${remoteClientId}`);
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    ws.send(JSON.stringify({
-                        type: "offer",
-                        offer: pc.localDescription,
-                        to: remoteClientId
-                    }));
-                    console.log(`  ✅ Offer sent to ${remoteClientId}`);
-                } catch (error) {
-                    console.error(`❌ Error creating offer:`, error);
-                }
-            }
 
             return pc;
         }
 
-        // ==================== WEBSOCKET ОБРАБОТЧИКИ ====================
+        async function handleOffer(from, offer, fromUsername) {
+            console.log(`📥 Received offer from ${from}`);
+
+            if (!peerConnections[from]) {
+                peerConnections[from] = createPeerConnection(from, fromUsername);
+            }
+
+            const pc = peerConnections[from];
+            if (!pc) {
+                console.error("❌ Failed to create peer connection");
+                return;
+            }
+
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                console.log(`  ✅ Set remote description`);
+
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                console.log(`  ✅ Created answer`);
+
+                ws.send(JSON.stringify({
+                    type: "answer",
+                    answer: pc.localDescription,
+                    to: from
+                }));
+                console.log(`  ✅ Answer sent to ${from}`);
+            } catch (error) {
+                console.error("❌ Error handling offer:", error);
+            }
+        }
+
+        async function handleAnswer(from, answer) {
+            console.log(`📥 Received answer from ${from}`);
+
+            const pc = peerConnections[from];
+            if (!pc) {
+                console.error("❌ No peer connection for answer");
+                return;
+            }
+
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                console.log(`  ✅ Set remote description (answer)`);
+            } catch (error) {
+                console.error("❌ Error handling answer:", error);
+            }
+        }
+
+        async function handleIceCandidate(from, candidate) {
+            const pc = peerConnections[from];
+            if (!pc) {
+                console.warn(`⏳ ICE candidate received but no peer connection yet for ${from}`);
+                return;
+            }
+
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                console.log(`  ✅ Added ICE candidate from ${from}`);
+            } catch (error) {
+                console.error("❌ Error adding ICE candidate:", error);
+            }
+        }
+
+        // ==================== WEBSOCKET ====================
         ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
             console.log("📨 Received:", data.type, data.from ? `from ${data.from}` : "");
 
-            // Получение списка существующих клиентов
+            // Список существующих клиентов
             if (data.type === "existing") {
                 myClientId = data.your_id;
                 myUsername = data.your_username || myUsername;
@@ -599,158 +611,56 @@
                     if (clientUsername) {
                         clientUsernames[cid] = clientUsername;
                     }
-                    console.log(`  👥 Existing client: ${cid} (${clientUsername || 'no username'})`);
                 }
                 return;
             }
 
-            // Уведомление о новом клиенте
+            // Новый клиент присоединился
             if (data.type === "new_client") {
                 const newClientId = typeof data.client === 'string' ? data.client : data.client.id;
                 const newClientUsername = typeof data.client === 'object' ? data.client.username : null;
-                console.log(`🆕 New client joined: ${newClientId} (${newClientUsername || 'no username'})`);
+                console.log(`🆕 New client: ${newClientId} (${newClientUsername || 'no username'})`);
 
                 if (newClientUsername) {
                     clientUsernames[newClientId] = newClientUsername;
                 }
 
-                // Создаем peer connection и отправляем offer (мы offerer)
+                // Создаем peer connection и отправляем offer
                 if (!peerConnections[newClientId] && localStream) {
-                    peerConnections[newClientId] = await createPeerConnection(newClientId, newClientUsername, true);
+                    peerConnections[newClientId] = createPeerConnection(newClientId, newClientUsername);
+                    
+                    try {
+                        const offer = await peerConnections[newClientId].createOffer();
+                        await peerConnections[newClientId].setLocalDescription(offer);
+                        ws.send(JSON.stringify({
+                            type: "offer",
+                            offer: peerConnections[newClientId].localDescription,
+                            to: newClientId
+                        }));
+                        console.log(`  ✅ Offer sent to ${newClientId}`);
+                    } catch (error) {
+                        console.error("❌ Error creating offer:", error);
+                    }
                 }
                 return;
             }
 
-            // Обработка WebRTC сигналов
+            // WebRTC сигналы
             const from = data.from;
-            if (!from) {
-                console.warn("⚠️ Received message without 'from' field");
-                return;
-            }
+            if (!from) return;
 
             if (data.from_username) {
                 clientUsernames[from] = data.from_username;
             }
 
-            // Обработка offer - создаем peer connection и отвечаем
             if (data.type === "offer") {
-                if (!localStream) {
-                    console.error(`❌ Cannot handle offer from ${from} - localStream not ready`);
-                    return;
-                }
-                
-                // Создаем peer connection если его нет
-                if (!peerConnections[from]) {
-                    console.log(`🔗 Creating peer connection for ${from} (received offer)`);
-                    peerConnections[from] = await createPeerConnection(from, data.from_username, false);
-                }
-
-                const pc = peerConnections[from];
-                if (!pc) {
-                    console.error(`❌ Failed to create peer connection for ${from}`);
-                    return;
-                }
-
-                try {
-                    console.log(`📥 Received offer from ${from}`);
-                    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-                    console.log(`  ✅ Set remote description (offer)`);
-
-                    // Обрабатываем накопленные ICE кандидаты
-                    if (pc.pendingCandidates && pc.pendingCandidates.length > 0) {
-                        console.log(`  🔄 Processing ${pc.pendingCandidates.length} pending ICE candidates`);
-                        for (const candidate of pc.pendingCandidates) {
-                            try {
-                                await pc.addIceCandidate(candidate);
-                            } catch (err) {
-                                console.error("Error adding pending candidate:", err);
-                            }
-                        }
-                        pc.pendingCandidates = [];
-                    }
-
-                    const answer = await pc.createAnswer();
-                    await pc.setLocalDescription(answer);
-                    console.log(`  ✅ Created and set local answer`);
-
-                    ws.send(JSON.stringify({
-                        type: "answer",
-                        answer: pc.localDescription,
-                        to: from
-                    }));
-                    console.log(`  ✅ Answer sent to ${from}`);
-                    return; // Важно: выходим после обработки offer
-                } catch (error) {
-                    console.error(`❌ Error processing offer from ${from}:`, error);
-                    return;
-                }
-            }
-
-            // Для остальных сигналов peer connection должен уже существовать
-            if (!peerConnections[from]) {
-                if (data.type === "ice") {
-                    // Если получаем ICE до offer, сохраняем для будущего peer connection
-                    console.log(`⏳ Received ICE from ${from} but no peer connection yet - will create when offer arrives`);
-                    return;
-                }
-                console.error(`❌ No peer connection for ${from} (received ${data.type})`);
-                return;
-            }
-
-            const pc = peerConnections[from];
-            if (!pc) {
-                console.error(`❌ Peer connection is null for ${from}`);
-                return;
-            }
-
-            try {
-
-                // Обработка answer
-                if (data.type === "answer") {
-                    console.log(`📥 Received answer from ${from}`);
-                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                    console.log(`  ✅ Set remote description (answer)`);
-                    
-                    // Обрабатываем накопленные ICE кандидаты
-                    if (pc.pendingCandidates && pc.pendingCandidates.length > 0) {
-                        console.log(`  🔄 Processing ${pc.pendingCandidates.length} pending ICE candidates`);
-                        for (const candidate of pc.pendingCandidates) {
-                            try {
-                                await pc.addIceCandidate(candidate);
-                            } catch (err) {
-                                console.error("Error adding pending candidate:", err);
-                            }
-                        }
-                        pc.pendingCandidates = [];
-                    }
-                }
-
-                // Обработка ICE кандидатов
-                if (data.type === "ice") {
-                    try {
-                        const candidate = new RTCIceCandidate(data.candidate);
-                        if (pc.remoteDescription) {
-                            await pc.addIceCandidate(candidate);
-                            console.log(`  ✅ Added ICE candidate from ${from}`);
-                        } else {
-                            // Сохраняем кандидаты если remote description еще не установлен
-                            if (!pc.pendingCandidates) {
-                                pc.pendingCandidates = [];
-                            }
-                            pc.pendingCandidates.push(candidate);
-                            console.log(`  ⏳ Queued ICE candidate from ${from} (waiting for remote description)`);
-                        }
-                    } catch (error) {
-                        console.error(`❌ Error adding ICE candidate:`, error);
-                    }
-                }
-
-                // Обработка чата
-                if (data.chat) {
-                    addChatMessage(from, data.chat, false, data.from_username);
-                }
-            } catch (error) {
-                console.error(`❌ Error processing ${data.type} from ${from}:`, error);
+                await handleOffer(from, data.offer, data.from_username);
+            } else if (data.type === "answer") {
+                await handleAnswer(from, data.answer);
+            } else if (data.type === "ice") {
+                await handleIceCandidate(from, data.candidate);
+            } else if (data.chat) {
+                addChatMessage(from, data.chat, false, data.from_username);
             }
         };
 
@@ -761,7 +671,6 @@
             const success = await initLocalStream();
             if (success) {
                 setTimeout(() => {
-                    console.log("📤 Sending join message");
                     ws.send(JSON.stringify({ type: "join" }));
                 }, 500);
             }
@@ -772,7 +681,7 @@
         };
 
         ws.onclose = () => {
-            console.log("🔌 WebSocket connection closed");
+            console.log("🔌 WebSocket closed");
         };
     </script>
 </body>
