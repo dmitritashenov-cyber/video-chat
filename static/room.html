@@ -464,10 +464,20 @@
             }
 
             console.log(`🔗 Creating peer connection to ${remoteClientId}`);
+            console.log(`  Local stream tracks: ${localStream.getTracks().length}`);
 
             const pc = new RTCPeerConnection(iceConfig);
             const remoteStream = new MediaStream();
             remoteStreams[remoteClientId] = remoteStream;
+
+            // Обрабатываем pending ICE кандидаты если есть
+            if (window.pendingIceCandidates && window.pendingIceCandidates[remoteClientId]) {
+                console.log(`  Processing ${window.pendingIceCandidates[remoteClientId].length} pending ICE candidates`);
+                const pending = window.pendingIceCandidates[remoteClientId];
+                delete window.pendingIceCandidates[remoteClientId];
+                // Они будут обработаны после установки remote description
+                pc.pendingIceCandidates = pending;
+            }
 
             // Добавляем локальные треки
             localStream.getTracks().forEach(track => {
@@ -527,7 +537,24 @@
         async function handleOffer(from, offer, fromUsername) {
             console.log(`📥 Received offer from ${from}`);
 
+            // Проверяем готовность localStream
+            if (!localStream) {
+                console.error("❌ Cannot handle offer - localStream not ready");
+                // Ждем готовности localStream
+                let attempts = 0;
+                while (!localStream && attempts < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+                if (!localStream) {
+                    console.error("❌ localStream still not ready after waiting");
+                    return;
+                }
+            }
+
+            // Создаем peer connection если его нет
             if (!peerConnections[from]) {
+                console.log(`🔗 Creating peer connection for ${from} (received offer)`);
                 peerConnections[from] = createPeerConnection(from, fromUsername);
             }
 
@@ -538,21 +565,42 @@
             }
 
             try {
+                console.log(`  Setting remote description...`);
                 await pc.setRemoteDescription(new RTCSessionDescription(offer));
                 console.log(`  ✅ Set remote description`);
 
+                // Обрабатываем pending ICE кандидаты
+                if (pc.pendingIceCandidates && pc.pendingIceCandidates.length > 0) {
+                    console.log(`  Processing ${pc.pendingIceCandidates.length} pending ICE candidates`);
+                    for (const candidate of pc.pendingIceCandidates) {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                        } catch (err) {
+                            console.error("Error adding pending candidate:", err);
+                        }
+                    }
+                    pc.pendingIceCandidates = [];
+                }
+
+                console.log(`  Creating answer...`);
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
-                console.log(`  ✅ Created answer`);
+                console.log(`  ✅ Created and set local answer`);
 
-                ws.send(JSON.stringify({
+                console.log(`  Sending answer to ${from}...`);
+                const answerMessage = JSON.stringify({
                     type: "answer",
                     answer: pc.localDescription,
                     to: from
-                }));
+                });
+                ws.send(answerMessage);
                 console.log(`  ✅ Answer sent to ${from}`);
             } catch (error) {
                 console.error("❌ Error handling offer:", error);
+                console.error("  Error details:", error.message);
+                if (error.stack) {
+                    console.error("  Stack:", error.stack);
+                }
             }
         }
 
@@ -647,15 +695,41 @@
 
             // WebRTC сигналы
             const from = data.from;
-            if (!from) return;
+            if (!from) {
+                console.warn("⚠️ Received message without 'from' field:", data);
+                return;
+            }
 
             if (data.from_username) {
                 clientUsernames[from] = data.from_username;
             }
 
+            // Обработка offer - приоритетная
             if (data.type === "offer") {
+                console.log(`📥 Processing offer from ${from}`);
                 await handleOffer(from, data.offer, data.from_username);
-            } else if (data.type === "answer") {
+                return; // Важно: выходим после обработки offer
+            }
+
+            // Для остальных сигналов peer connection должен существовать
+            if (!peerConnections[from]) {
+                if (data.type === "ice") {
+                    console.warn(`⏳ Received ICE from ${from} but no peer connection yet`);
+                    // Сохраняем для будущего peer connection
+                    if (!window.pendingIceCandidates) {
+                        window.pendingIceCandidates = {};
+                    }
+                    if (!window.pendingIceCandidates[from]) {
+                        window.pendingIceCandidates[from] = [];
+                    }
+                    window.pendingIceCandidates[from].push(data.candidate);
+                    return;
+                }
+                console.error(`❌ No peer connection for ${from} (received ${data.type})`);
+                return;
+            }
+
+            if (data.type === "answer") {
                 await handleAnswer(from, data.answer);
             } else if (data.type === "ice") {
                 await handleIceCandidate(from, data.candidate);
