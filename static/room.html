@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Video Room</title>
     <style>
         * {
@@ -430,11 +432,31 @@
 
         async function initLocalStream() {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: true,
-                    audio: true 
-                });
-                document.getElementById("localVideo").srcObject = localStream;
+                // Настройки для лучшей совместимости с мобильными устройствами
+                const constraints = {
+                    video: {
+                        facingMode: 'user', // Фронтальная камера на мобильных
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                };
+                
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                const localVideo = document.getElementById("localVideo");
+                localVideo.srcObject = localStream;
+                
+                // Убеждаемся что видео воспроизводится на iOS
+                try {
+                    await localVideo.play();
+                } catch (e) {
+                    console.warn("Autoplay prevented, user interaction needed");
+                }
+                
                 console.log("✅ Local stream ready:", localStream.getTracks().length, "tracks");
                 
                 // Обрабатываем pending offers
@@ -461,7 +483,10 @@
             wrapper.setAttribute('data-label', username || `Участник ${clientId}`);
             const video = document.createElement("video");
             video.autoplay = true;
-            video.playsInline = true;
+            video.playsInline = true; // Критично для iOS
+            video.muted = false; // Удаленные видео не должны быть muted
+            video.setAttribute('playsinline', 'true'); // Для старых версий iOS
+            video.setAttribute('webkit-playsinline', 'true'); // Для старых версий iOS
             video.id = `video-${clientId}`;
             wrapper.appendChild(video);
             document.getElementById("remotes").appendChild(wrapper);
@@ -515,9 +540,21 @@
 
                 // Устанавливаем stream на video
                 if (remoteStream.getTracks().length > 0) {
-                    remoteVideos[remoteClientId].srcObject = remoteStream;
-                    remoteVideos[remoteClientId].play().catch(err => {
-                        console.error("Error playing video:", err);
+                    const videoElement = remoteVideos[remoteClientId];
+                    videoElement.srcObject = remoteStream;
+                    
+                    // Для iOS важно явно вызвать play()
+                    videoElement.play().then(() => {
+                        console.log(`  ▶️ Video playing for ${remoteClientId}`);
+                    }).catch(err => {
+                        console.error(`  ❌ Error playing video for ${remoteClientId}:`, err);
+                        // На iOS может потребоваться пользовательское взаимодействие
+                        // Попробуем еще раз через небольшую задержку
+                        setTimeout(() => {
+                            videoElement.play().catch(e => {
+                                console.error(`  ❌ Retry play failed:`, e);
+                            });
+                        }, 500);
                     });
                     console.log(`  ✅ Video updated (${remoteStream.getTracks().length} tracks)`);
                 }
