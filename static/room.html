@@ -604,6 +604,19 @@
                     await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                     console.log(`  ✅ Set remote description (offer)`);
 
+                    // Обрабатываем накопленные ICE кандидаты
+                    if (pc.pendingCandidates && pc.pendingCandidates.length > 0) {
+                        console.log(`  🔄 Processing ${pc.pendingCandidates.length} pending ICE candidates`);
+                        for (const candidate of pc.pendingCandidates) {
+                            try {
+                                await pc.addIceCandidate(candidate);
+                            } catch (err) {
+                                console.error("Error adding pending candidate:", err);
+                            }
+                        }
+                        pc.pendingCandidates = [];
+                    }
+
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
                     console.log(`  ✅ Created and set local answer`);
@@ -621,6 +634,19 @@
                     console.log(`📥 Received answer from ${from}`);
                     await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                     console.log(`  ✅ Set remote description (answer)`);
+                    
+                    // Обрабатываем накопленные ICE кандидаты
+                    if (pc.pendingCandidates && pc.pendingCandidates.length > 0) {
+                        console.log(`  🔄 Processing ${pc.pendingCandidates.length} pending ICE candidates`);
+                        for (const candidate of pc.pendingCandidates) {
+                            try {
+                                await pc.addIceCandidate(candidate);
+                            } catch (err) {
+                                console.error("Error adding pending candidate:", err);
+                            }
+                        }
+                        pc.pendingCandidates = [];
+                    }
                 }
 
                 // Обработка ICE кандидатов
